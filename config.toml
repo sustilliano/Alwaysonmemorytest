@@ -1,0 +1,28 @@
+# Always-On Memory Agent Configuration
+
+[server]
+host = "0.0.0.0"
+port = 8888
+
+[watcher]
+inbox_dir = "./inbox"
+poll_interval_secs = 5
+
+[consolidation]
+interval_minutes = 30
+min_unconsolidated = 3   # minimum memories before consolidation triggers
+edge_threshold = 0.4     # minimum edge score to flag as "interesting boundary"
+
+[llm]
+# Ollama, or any OpenAI-compatible endpoint
+base_url = "http://localhost:11434"
+model = "llama3.1:8b"
+# For OpenAI-compatible APIs, set the api_key
+api_key = ""
+
+[database]
+path = "./memory.duckdb"
+
+[traits]
+# Number of trait dimensions to extract per memory
+dimensions = 16
