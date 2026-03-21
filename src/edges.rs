@@ -1,4 +1,5 @@
 use crate::db::Memory;
+use crate::math::{jaccard_similarity, cosine_similarity};
 
 /// Rgano edge detection applied to memory space.
 ///
@@ -92,44 +93,6 @@ pub fn detect_all_edges(memories: &[Memory], threshold: f64) -> Vec<(i64, i64, f
 
     edges.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     edges
-}
-
-// --- Similarity primitives ---
-
-fn jaccard_similarity(a: &[String], b: &[String]) -> f64 {
-    if a.is_empty() && b.is_empty() {
-        return 0.0;
-    }
-    let a_lower: std::collections::HashSet<String> =
-        a.iter().map(|s| s.to_lowercase()).collect();
-    let b_lower: std::collections::HashSet<String> =
-        b.iter().map(|s| s.to_lowercase()).collect();
-
-    let intersection = a_lower.intersection(&b_lower).count() as f64;
-    let union = a_lower.union(&b_lower).count() as f64;
-
-    if union == 0.0 {
-        0.0
-    } else {
-        intersection / union
-    }
-}
-
-fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
-    let len = a.len().min(b.len());
-    if len == 0 {
-        return 0.0;
-    }
-
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let mag_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let mag_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-
-    if mag_a == 0.0 || mag_b == 0.0 {
-        0.0
-    } else {
-        dot / (mag_a * mag_b)
-    }
 }
 
 #[cfg(test)]

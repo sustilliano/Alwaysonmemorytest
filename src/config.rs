@@ -33,6 +33,8 @@ pub struct ConsolidationConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct LlmConfig {
+    /// "ollama" or "openai" (any OpenAI-compatible endpoint)
+    pub provider: String,
     pub base_url: String,
     pub model: String,
     pub api_key: String,

@@ -66,9 +66,9 @@ impl LlmClient {
     }
 
     /// Send a prompt and get a text response.
-    /// Auto-detects Ollama vs OpenAI-compatible based on the URL.
+    /// Routes to Ollama or OpenAI-compatible endpoint based on config.provider.
     pub async fn complete(&self, prompt: &str) -> Result<String> {
-        if self.config.base_url.contains("11434") {
+        if self.config.provider == "ollama" {
             self.ollama_complete(prompt).await
         } else {
             self.openai_complete(prompt).await

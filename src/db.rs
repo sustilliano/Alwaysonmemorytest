@@ -368,6 +368,57 @@ impl MemoryStore {
         Ok(rows)
     }
 
+    /// Get a paginated page of memories.
+    pub async fn paginated_memories(&self, limit: usize, offset: usize) -> Result<Vec<Memory>> {
+        let conn = self.conn.read().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, collection, content, summary, source, file_hash, importance, traits, topics, entities,
+                    created_at::TEXT, consolidated
+             FROM memories ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64, offset as i64], |row| {
+                Ok(Memory {
+                    id: row.get(0)?,
+                    collection: row.get(1)?,
+                    content: row.get(2)?,
+                    summary: row.get(3)?,
+                    source: row.get(4)?,
+                    file_hash: row.get(5)?,
+                    importance: row.get(6)?,
+                    traits: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
+                    topics: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
+                    entities: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+                    created_at: row.get(10)?,
+                    consolidated: row.get(11)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Get a paginated page of edges.
+    pub async fn paginated_edges(&self, limit: usize, offset: usize) -> Result<Vec<Edge>> {
+        let conn = self.conn.read().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, memory_a, memory_b, edge_score, relationship, created_at::TEXT
+             FROM edges ORDER BY edge_score DESC LIMIT ? OFFSET ?",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64, offset as i64], |row| {
+                Ok(Edge {
+                    id: row.get(0)?,
+                    memory_a: row.get(1)?,
+                    memory_b: row.get(2)?,
+                    edge_score: row.get(3)?,
+                    relationship: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Memory count and stats.
     pub async fn stats(&self) -> Result<serde_json::Value> {
         let conn = self.conn.read().await;

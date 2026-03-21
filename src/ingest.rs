@@ -6,6 +6,7 @@ use tracing::{info, warn, error};
 
 use crate::db::MemoryStore;
 use crate::llm::LlmClient;
+use crate::revision::RevisionResult;
 
 /// Structured extraction result from the LLM.
 #[derive(Debug, serde::Deserialize)]
@@ -17,11 +18,11 @@ struct Extraction {
     traits: Vec<f64>,
 }
 
-/// Result of an ingestion attempt.
-#[derive(Debug)]
+/// Result of an ingestion attempt, including revision detection details.
+#[derive(Debug, serde::Serialize)]
 pub struct IngestResult {
     pub id: i64,
-    pub revision: Option<crate::revision::RevisionResult>,
+    pub revision: RevisionResult,
 }
 
 /// Ingest raw text content into the memory store.
@@ -32,12 +33,23 @@ pub async fn ingest_text(
     source: &str,
     collection: &str,
     trait_dims: usize,
-) -> Result<i64> {
+) -> Result<IngestResult> {
     let hash = sha256_hash(content);
 
     if store.has_file_hash(&hash).await? {
         info!("skipping exact duplicate: {source}");
-        return Ok(-1);
+        return Ok(IngestResult {
+            id: -1,
+            revision: RevisionResult {
+                match_id: None,
+                classification: crate::revision::Classification::StrongMatch,
+                flight_status: crate::revision::FlightStatus::Landed,
+                regime_scores: std::collections::HashMap::new(),
+                total_score: 1.0,
+                fired_regime: Some("file_hash".to_string()),
+                explanation: "exact duplicate (hash match)".to_string(),
+            },
+        });
     }
 
     let extraction = extract_structured(llm, content, trait_dims).await?;
@@ -68,7 +80,7 @@ pub async fn ingest_text(
                 score = format!("{:.3}", rev.total_score),
                 "flight=LANDED — near-duplicate detected, skipping"
             );
-            return Ok(-1);
+            return Ok(IngestResult { id: -1, revision: rev });
         }
         crate::revision::Classification::SemanticMatch => {
             info!(
@@ -129,7 +141,7 @@ pub async fn ingest_text(
         "ingested memory"
     );
 
-    Ok(id)
+    Ok(IngestResult { id, revision: rev })
 }
 
 /// Ingest a file from disk.
@@ -139,7 +151,7 @@ pub async fn ingest_file(
     path: &Path,
     collection: &str,
     trait_dims: usize,
-) -> Result<i64> {
+) -> Result<IngestResult> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -154,12 +166,34 @@ pub async fn ingest_file(
         }
         _ => {
             warn!("unsupported file type: {ext} ({path:?})");
-            return Ok(-1);
+            return Ok(IngestResult {
+                id: -1,
+                revision: RevisionResult {
+                    match_id: None,
+                    classification: crate::revision::Classification::Novel,
+                    flight_status: crate::revision::FlightStatus::Crashed,
+                    regime_scores: std::collections::HashMap::new(),
+                    total_score: 0.0,
+                    fired_regime: None,
+                    explanation: format!("unsupported file type: {ext}"),
+                },
+            });
         }
     };
 
     if content.trim().is_empty() {
-        return Ok(-1);
+        return Ok(IngestResult {
+            id: -1,
+            revision: RevisionResult {
+                match_id: None,
+                classification: crate::revision::Classification::Novel,
+                flight_status: crate::revision::FlightStatus::Crashed,
+                regime_scores: std::collections::HashMap::new(),
+                total_score: 0.0,
+                fired_regime: None,
+                explanation: "empty file".to_string(),
+            },
+        });
     }
 
     let source = path
@@ -171,10 +205,11 @@ pub async fn ingest_file(
 }
 
 /// Spawn the file watcher task. Sends file paths through the channel.
+/// Returns the debouncer so the caller can keep it alive for the program lifetime.
 pub fn spawn_watcher(
     inbox: PathBuf,
     tx: mpsc::Sender<PathBuf>,
-) -> Result<()> {
+) -> Result<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
     use notify::{RecursiveMode, Watcher};
     use notify_debouncer_mini::new_debouncer;
     use std::time::Duration;
@@ -201,11 +236,8 @@ pub fn spawn_watcher(
 
     debouncer.watcher().watch(&inbox, RecursiveMode::NonRecursive)?;
 
-    // Leak the debouncer so it stays alive (it runs in its own thread)
-    std::mem::forget(debouncer);
-
     info!("watching inbox: {inbox:?}");
-    Ok(())
+    Ok(debouncer)
 }
 
 /// Scan inbox for any existing files on startup.

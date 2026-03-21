@@ -47,18 +47,30 @@ async fn status(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::V
     Ok(Json(stats))
 }
 
+#[derive(Deserialize)]
+struct PaginationParams {
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn default_limit() -> usize { 50 }
+
 async fn list_memories(
     State(state): State<Arc<AppState>>,
+    Query(page): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let memories = state.store.all_memories().await?;
-    Ok(Json(serde_json::json!({ "memories": memories })))
+    let memories = state.store.paginated_memories(page.limit, page.offset).await?;
+    Ok(Json(serde_json::json!({ "memories": memories, "limit": page.limit, "offset": page.offset })))
 }
 
 async fn list_edges(
     State(state): State<Arc<AppState>>,
+    Query(page): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let edges = state.store.all_edges().await?;
-    Ok(Json(serde_json::json!({ "edges": edges })))
+    let edges = state.store.paginated_edges(page.limit, page.offset).await?;
+    Ok(Json(serde_json::json!({ "edges": edges, "limit": page.limit, "offset": page.offset })))
 }
 
 async fn list_consolidations(
@@ -81,7 +93,7 @@ async fn ingest_text(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let source = req.source.unwrap_or_else(|| "api".to_string());
     let collection = req.collection.unwrap_or_else(|| "default".to_string());
-    let id = ingest::ingest_text(
+    let result = ingest::ingest_text(
         &state.store,
         &state.llm,
         &req.text,
@@ -92,8 +104,9 @@ async fn ingest_text(
     .await?;
 
     Ok(Json(serde_json::json!({
-        "id": id,
-        "status": if id > 0 { "ingested" } else { "duplicate" }
+        "id": result.id,
+        "status": if result.id > 0 { "ingested" } else { "duplicate" },
+        "revision": result.revision,
     })))
 }
 
@@ -135,10 +148,19 @@ async fn delete_memory(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
+#[derive(Deserialize)]
+struct ClearRequest {
+    confirm: Option<bool>,
+}
+
 async fn clear_all(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    state.store.clear_all().await?;
+    Json(req): Json<ClearRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if req.confirm != Some(true) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    state.store.clear_all().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "status": "cleared" })))
 }
 

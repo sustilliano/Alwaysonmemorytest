@@ -14,7 +14,8 @@ min_unconsolidated = 3   # minimum memories before consolidation triggers
 edge_threshold = 0.4     # minimum edge score to flag as "interesting boundary"
 
 [llm]
-# Ollama, or any OpenAI-compatible endpoint
+# "ollama" uses /api/generate; "openai" uses /v1/chat/completions
+provider = "ollama"
 base_url = "http://localhost:11434"
 model = "llama3.1:8b"
 # For OpenAI-compatible APIs, set the api_key

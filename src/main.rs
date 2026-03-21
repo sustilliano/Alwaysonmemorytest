@@ -6,6 +6,7 @@ mod edges;
 mod ingest;
 mod llm;
 mod localrecall;
+mod math;
 mod query;
 mod revision;
 
@@ -32,7 +33,7 @@ async fn main() -> Result<()> {
 
     info!("always-on-memory agent starting");
     info!("  database: {:?}", config.database.path);
-    info!("  llm: {} ({})", config.llm.base_url, config.llm.model);
+    info!("  llm: {} ({}, provider={})", config.llm.base_url, config.llm.model, config.llm.provider);
     info!("  inbox: {:?}", config.watcher.inbox_dir);
     info!("  consolidation: every {} min", config.consolidation.interval_minutes);
     info!("  trait dimensions: {}", config.traits.dimensions);
@@ -51,9 +52,9 @@ async fn main() -> Result<()> {
     // File watcher channel
     let (file_tx, mut file_rx) = mpsc::channel::<std::path::PathBuf>(100);
 
-    // Spawn inbox file watcher
+    // Spawn inbox file watcher — keep the debouncer alive for the program lifetime
     let inbox = config.watcher.inbox_dir.clone();
-    ingest::spawn_watcher(inbox.clone(), file_tx.clone())?;
+    let _watcher = ingest::spawn_watcher(inbox.clone(), file_tx.clone())?;
 
     // Scan existing files on startup
     ingest::scan_existing(&inbox, &file_tx).await?;
@@ -66,7 +67,7 @@ async fn main() -> Result<()> {
         while let Some(path) = file_rx.recv().await {
             info!("ingesting file: {path:?}");
             match ingest::ingest_file(&ingest_store, &ingest_llm, &path, "default", trait_dims).await {
-                Ok(id) if id > 0 => info!("ingested {path:?} -> memory #{id}"),
+                Ok(result) if result.id > 0 => info!("ingested {path:?} -> memory #{}", result.id),
                 Ok(_) => info!("skipped {path:?} (duplicate or unsupported)"),
                 Err(e) => error!("failed to ingest {path:?}: {e:?}"),
             }
@@ -122,14 +123,14 @@ async fn main() -> Result<()> {
     info!("API server listening on {addr}");
     info!("native endpoints:");
     info!("  GET  /status         - memory stats");
-    info!("  GET  /memories       - list all memories");
-    info!("  GET  /edges          - list detected edges");
+    info!("  GET  /memories       - list memories (?limit=50&offset=0)");
+    info!("  GET  /edges          - list detected edges (?limit=50&offset=0)");
     info!("  GET  /consolidations - list consolidation insights");
-    info!("  POST /ingest         - ingest text");
+    info!("  POST /ingest         - ingest text (returns revision details)");
     info!("  GET  /query?q=...    - query memory");
     info!("  POST /consolidate    - trigger manual consolidation");
     info!("  POST /delete         - delete memory");
-    info!("  POST /clear          - clear all memories");
+    info!("  POST /clear          - clear all memories (requires {{\"confirm\":true}})");
     info!("localrecall-compatible endpoints:");
     info!("  POST /api/collections                          - create collection");
     info!("  GET  /api/collections                          - list collections");

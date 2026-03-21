@@ -23,6 +23,7 @@
 //! The regime count IS the dimensionality. 9 core = 9D. Add 3 NFL = 12D.
 
 use crate::db::Memory;
+use crate::math::{jaccard_similarity, jaccard_set, cosine_similarity};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -271,7 +272,7 @@ impl Regime for ContentRegime {
         let len_ratio = a.len().min(b.len()) as f64 / a.len().max(b.len()) as f64;
         let wa: std::collections::HashSet<&str> = a.split_whitespace().collect();
         let wb: std::collections::HashSet<&str> = b.split_whitespace().collect();
-        0.3 * len_ratio + 0.7 * set_jaccard_ref(&wa, &wb)
+        0.3 * len_ratio + 0.7 * jaccard_set(&wa, &wb)
     }
 }
 
@@ -284,8 +285,8 @@ impl Regime for SemanticRegime {
     fn weight(&self) -> f64 { self.weight }
     fn next_on_fail(&self) -> Option<&str> { Some("trait") }
     fn evaluate(&self, incoming: &IncomingContent, existing: &Memory) -> f64 {
-        let t = jaccard(&incoming.topics, &existing.topics);
-        let e = jaccard(&incoming.entities, &existing.entities);
+        let t = jaccard_similarity(&incoming.topics, &existing.topics);
+        let e = jaccard_similarity(&incoming.entities, &existing.entities);
         let i = 1.0 - (incoming.importance - existing.importance).abs();
         (0.45 * t + 0.35 * e + 0.20 * i).clamp(0.0, 1.0)
     }
@@ -354,7 +355,7 @@ impl Regime for NarrativeRegime {
         if a.is_empty() || b.is_empty() { return 0.0; }
         let wa: std::collections::HashSet<&str> = a.split_whitespace().collect();
         let wb: std::collections::HashSet<&str> = b.split_whitespace().collect();
-        set_jaccard_ref(&wa, &wb)
+        jaccard_set(&wa, &wb)
     }
 }
 
@@ -367,7 +368,7 @@ impl Regime for KnowledgeRegime {
     fn weight(&self) -> f64 { self.weight }
     fn next_on_fail(&self) -> Option<&str> { Some("structural") }
     fn evaluate(&self, incoming: &IncomingContent, existing: &Memory) -> f64 {
-        let entity_sim = jaccard(&incoming.entities, &existing.entities);
+        let entity_sim = jaccard_similarity(&incoming.entities, &existing.entities);
         let il = incoming.content.to_lowercase();
         let el = existing.content.to_lowercase();
         let im = existing.entities.iter().filter(|e| il.contains(&e.to_lowercase())).count();
@@ -412,8 +413,8 @@ impl Regime for ConsensusRegime {
     fn next_on_fail(&self) -> Option<&str> { None }
     fn evaluate(&self, incoming: &IncomingContent, existing: &Memory) -> f64 {
         let sigs = [
-            jaccard(&incoming.topics, &existing.topics),
-            jaccard(&incoming.entities, &existing.entities),
+            jaccard_similarity(&incoming.topics, &existing.topics),
+            jaccard_similarity(&incoming.entities, &existing.entities),
             if incoming.traits.is_empty() || existing.traits.is_empty() { 0.5 }
             else { cosine_similarity(&incoming.traits, &existing.traits).clamp(0.0, 1.0) },
             1.0 - (incoming.importance - existing.importance).abs(),
@@ -422,36 +423,6 @@ impl Regime for ConsensusRegime {
         let avg: f64 = sigs.iter().sum::<f64>() / sigs.len() as f64;
         (agreeing as f64 / sigs.len() as f64 * avg).clamp(0.0, 1.0)
     }
-}
-
-// ====================================================================
-// PRIMITIVES
-// ====================================================================
-
-fn jaccard(a: &[String], b: &[String]) -> f64 {
-    if a.is_empty() && b.is_empty() { return 0.0; }
-    let a_set: std::collections::HashSet<String> = a.iter().map(|s| s.to_lowercase()).collect();
-    let b_set: std::collections::HashSet<String> = b.iter().map(|s| s.to_lowercase()).collect();
-    let i = a_set.intersection(&b_set).count() as f64;
-    let u = a_set.union(&b_set).count() as f64;
-    if u == 0.0 { 0.0 } else { i / u }
-}
-
-fn set_jaccard_ref<T: std::hash::Hash + Eq>(
-    a: &std::collections::HashSet<T>, b: &std::collections::HashSet<T>,
-) -> f64 {
-    let i = a.intersection(b).count() as f64;
-    let u = a.union(b).count() as f64;
-    if u == 0.0 { 0.0 } else { i / u }
-}
-
-fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
-    let len = a.len().min(b.len());
-    if len == 0 { return 0.0; }
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let ma: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let mb: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if ma == 0.0 || mb == 0.0 { 0.0 } else { dot / (ma * mb) }
 }
 
 // ====================================================================
