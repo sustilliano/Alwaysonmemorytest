@@ -286,9 +286,14 @@ impl Regime for SemanticRegime {
     fn next_on_fail(&self) -> Option<&str> { Some("trait") }
     fn evaluate(&self, incoming: &IncomingContent, existing: &Memory) -> f64 {
         let t = jaccard_similarity(&incoming.topics, &existing.topics);
-        let e = jaccard_similarity(&incoming.entities, &existing.entities);
         let i = 1.0 - (incoming.importance - existing.importance).abs();
-        (0.45 * t + 0.35 * e + 0.20 * i).clamp(0.0, 1.0)
+        if incoming.entities.is_empty() && existing.entities.is_empty() {
+            // Neither has entities — redistribute entity weight to available signals.
+            (0.45 * t + 0.20 * i) / 0.65
+        } else {
+            let e = jaccard_similarity(&incoming.entities, &existing.entities);
+            (0.45 * t + 0.35 * e + 0.20 * i).clamp(0.0, 1.0)
+        }
     }
 }
 
@@ -368,13 +373,19 @@ impl Regime for KnowledgeRegime {
     fn weight(&self) -> f64 { self.weight }
     fn next_on_fail(&self) -> Option<&str> { Some("structural") }
     fn evaluate(&self, incoming: &IncomingContent, existing: &Memory) -> f64 {
+        let total = incoming.entities.len() + existing.entities.len();
+        if total == 0 {
+            // No entities in either — fall back to direct content word overlap.
+            let wa: std::collections::HashSet<&str> = incoming.content.split_whitespace().collect();
+            let wb: std::collections::HashSet<&str> = existing.content.split_whitespace().collect();
+            return jaccard_set(&wa, &wb);
+        }
         let entity_sim = jaccard_similarity(&incoming.entities, &existing.entities);
         let il = incoming.content.to_lowercase();
         let el = existing.content.to_lowercase();
         let im = existing.entities.iter().filter(|e| il.contains(&e.to_lowercase())).count();
         let em = incoming.entities.iter().filter(|e| el.contains(&e.to_lowercase())).count();
-        let total = incoming.entities.len() + existing.entities.len();
-        let cross = if total > 0 { (im + em) as f64 / total as f64 } else { 0.0 };
+        let cross = (im + em) as f64 / total as f64;
         (0.5 * entity_sim + 0.5 * cross).clamp(0.0, 1.0)
     }
 }
