@@ -3,6 +3,7 @@ mod config;
 mod consolidate;
 mod db;
 mod edges;
+mod flightscore;
 mod ingest;
 mod llm;
 mod localrecall;
@@ -131,6 +132,7 @@ async fn main() -> Result<()> {
     info!("  POST /consolidate    - trigger manual consolidation");
     info!("  POST /delete         - delete memory");
     info!("  POST /clear          - clear all memories (requires {{\"confirm\":true}})");
+    info!("  GET  /flightscore    - Rgano-powered flight score for the knowledge graph");
     info!("localrecall-compatible endpoints:");
     info!("  POST /api/collections                          - create collection");
     info!("  GET  /api/collections                          - list collections");

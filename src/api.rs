@@ -13,6 +13,7 @@ use tracing::error;
 use crate::config::Config;
 use crate::consolidate;
 use crate::db::MemoryStore;
+use crate::flightscore;
 use crate::ingest;
 use crate::llm::LlmClient;
 use crate::query;
@@ -36,6 +37,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/consolidate", post(trigger_consolidate))
         .route("/delete", post(delete_memory))
         .route("/clear", post(clear_all))
+        .route("/flightscore", get(flight_score))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -162,6 +164,13 @@ async fn clear_all(
     }
     state.store.clear_all().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "status": "cleared" })))
+}
+
+async fn flight_score(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let report = flightscore::score(&state.store).await?;
+    Ok(Json(serde_json::to_value(report).map_err(anyhow::Error::from)?))
 }
 
 // --- Error type for Axum ---

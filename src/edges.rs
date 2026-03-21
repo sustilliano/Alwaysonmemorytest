@@ -102,6 +102,7 @@ mod tests {
     fn make_memory(id: i64, topics: &[&str], traits: &[f64], importance: f64) -> Memory {
         Memory {
             id,
+            collection: "default".to_string(),
             content: String::new(),
             summary: String::new(),
             source: String::new(),
