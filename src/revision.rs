@@ -338,7 +338,7 @@ impl Regime for ProvenanceRegime {
         if a == b { return 1.0; }
         let pa: std::collections::HashSet<&str> = a.split(&['/', '\\', '.'][..]).collect();
         let pb: std::collections::HashSet<&str> = b.split(&['/', '\\', '.'][..]).collect();
-        set_jaccard_ref(&pa, &pb)
+        jaccard_set(&pa, &pb)
     }
 }
 

@@ -211,14 +211,14 @@ pub fn spawn_watcher(
     tx: mpsc::Sender<PathBuf>,
 ) -> Result<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
     use notify::{RecursiveMode, Watcher};
-    use notify_debouncer_mini::new_debouncer;
+    use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
     use std::time::Duration;
 
     // Ensure inbox exists
     std::fs::create_dir_all(&inbox)?;
 
     let tx_clone = tx.clone();
-    let mut debouncer = new_debouncer(Duration::from_secs(2), move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, Vec<notify::Error>>| {
+    let mut debouncer = new_debouncer(Duration::from_secs(2), move |res: DebounceEventResult| {
         match res {
             Ok(events) => {
                 for event in events {
@@ -230,7 +230,7 @@ pub fn spawn_watcher(
                     }
                 }
             }
-            Err(errors) => error!("watcher error: {errors:?}"),
+            Err(e) => error!("watcher error: {e:?}"),
         }
     })?;
 

@@ -2,8 +2,7 @@ use anyhow::{Context, Result};
 use duckdb::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, Mutex};
 
 /// A single memory unit extracted from ingested content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +54,7 @@ pub struct Edge {
 /// Thread-safe handle to the DuckDB store.
 #[derive(Clone)]
 pub struct MemoryStore {
-    conn: Arc<RwLock<Connection>>,
+    conn: Arc<Mutex<Connection>>,
 }
 
 impl MemoryStore {
@@ -63,15 +62,14 @@ impl MemoryStore {
         let conn =
             Connection::open(path).with_context(|| format!("failed to open db at {path:?}"))?;
         let store = Self {
-            conn: Arc::new(RwLock::new(conn)),
+            conn: Arc::new(Mutex::new(conn)),
         };
         store.init_schema_blocking()?;
         Ok(store)
     }
 
     fn init_schema_blocking(&self) -> Result<()> {
-        // We're still in sync init, so use try_write
-        let conn = self.conn.try_write().expect("lock during init");
+        let conn = self.conn.lock().expect("lock during init");
         conn.execute_batch(
             "
             CREATE SEQUENCE IF NOT EXISTS mem_seq START 1;
@@ -128,7 +126,7 @@ impl MemoryStore {
         topics: &[String],
         entities: &[String],
     ) -> Result<i64> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         let traits_json = serde_json::to_string(traits)?;
         let topics_json = serde_json::to_string(topics)?;
         let entities_json = serde_json::to_string(entities)?;
@@ -146,7 +144,7 @@ impl MemoryStore {
 
     /// Check if a file has already been ingested by its hash.
     pub async fn has_file_hash(&self, hash: &str) -> Result<bool> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM memories WHERE file_hash = ?",
             params![hash],
@@ -157,7 +155,7 @@ impl MemoryStore {
 
     /// Get all unconsolidated memories.
     pub async fn unconsolidated_memories(&self) -> Result<Vec<Memory>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, collection, content, summary, source, file_hash, importance, traits, topics, entities,
                     created_at::TEXT, consolidated
@@ -186,7 +184,7 @@ impl MemoryStore {
 
     /// Get all memories.
     pub async fn all_memories(&self) -> Result<Vec<Memory>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, collection, content, summary, source, file_hash, importance, traits, topics, entities,
                     created_at::TEXT, consolidated
@@ -215,7 +213,7 @@ impl MemoryStore {
 
     /// Get memories by collection.
     pub async fn memories_by_collection(&self, collection: &str) -> Result<Vec<Memory>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, collection, content, summary, source, file_hash, importance, traits, topics, entities,
                     created_at::TEXT, consolidated
@@ -244,7 +242,7 @@ impl MemoryStore {
 
     /// List all distinct collections.
     pub async fn list_collections(&self) -> Result<Vec<String>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT DISTINCT collection FROM memories ORDER BY collection")?;
         let rows = stmt
             .query_map([], |row| row.get(0))?
@@ -254,14 +252,14 @@ impl MemoryStore {
 
     /// Delete all memories in a collection.
     pub async fn clear_collection(&self, collection: &str) -> Result<()> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM memories WHERE collection = ?", params![collection])?;
         Ok(())
     }
 
     /// Delete a memory by source name within a collection.
     pub async fn delete_entry(&self, collection: &str, source: &str) -> Result<bool> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
             "DELETE FROM memories WHERE collection = ? AND source = ?",
             params![collection, source],
@@ -271,7 +269,7 @@ impl MemoryStore {
 
     /// Mark memories as consolidated.
     pub async fn mark_consolidated(&self, ids: &[i64]) -> Result<()> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         for id in ids {
             conn.execute(
                 "UPDATE memories SET consolidated = true WHERE id = ?",
@@ -289,7 +287,7 @@ impl MemoryStore {
         edge_score: f64,
         connections: &[Connection_],
     ) -> Result<i64> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         let ids_json = serde_json::to_string(memory_ids)?;
         let conn_json = serde_json::to_string(connections)?;
 
@@ -311,7 +309,7 @@ impl MemoryStore {
         edge_score: f64,
         relationship: &str,
     ) -> Result<i64> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         let id: i64 = conn.query_row(
             "INSERT INTO edges (memory_a, memory_b, edge_score, relationship)
              VALUES (?, ?, ?, ?)
@@ -324,7 +322,7 @@ impl MemoryStore {
 
     /// Get all consolidation insights.
     pub async fn all_consolidations(&self) -> Result<Vec<Consolidation>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, memory_ids, insight, edge_score, connections, created_at::TEXT
              FROM consolidations ORDER BY created_at DESC",
@@ -348,7 +346,7 @@ impl MemoryStore {
 
     /// Get all edges.
     pub async fn all_edges(&self) -> Result<Vec<Edge>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, memory_a, memory_b, edge_score, relationship, created_at::TEXT
              FROM edges ORDER BY edge_score DESC",
@@ -370,7 +368,7 @@ impl MemoryStore {
 
     /// Get a paginated page of memories.
     pub async fn paginated_memories(&self, limit: usize, offset: usize) -> Result<Vec<Memory>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, collection, content, summary, source, file_hash, importance, traits, topics, entities,
                     created_at::TEXT, consolidated
@@ -399,7 +397,7 @@ impl MemoryStore {
 
     /// Get a paginated page of edges.
     pub async fn paginated_edges(&self, limit: usize, offset: usize) -> Result<Vec<Edge>> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, memory_a, memory_b, edge_score, relationship, created_at::TEXT
              FROM edges ORDER BY edge_score DESC LIMIT ? OFFSET ?",
@@ -421,7 +419,7 @@ impl MemoryStore {
 
     /// Memory count and stats.
     pub async fn stats(&self) -> Result<serde_json::Value> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().unwrap();
         let total: i64 =
             conn.query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))?;
         let unconsolidated: i64 = conn.query_row(
@@ -444,14 +442,14 @@ impl MemoryStore {
 
     /// Delete a memory by ID.
     pub async fn delete_memory(&self, id: i64) -> Result<bool> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         let affected = conn.execute("DELETE FROM memories WHERE id = ?", params![id])?;
         Ok(affected > 0)
     }
 
     /// Clear everything.
     pub async fn clear_all(&self) -> Result<()> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "DELETE FROM edges; DELETE FROM consolidations; DELETE FROM memories;",
         )?;

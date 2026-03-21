@@ -136,7 +136,7 @@ async fn upload_text(
         .and_then(|v| v.as_str())
         .unwrap_or("upload");
 
-    let id = ingest::ingest_text(
+    let result = ingest::ingest_text(
         &state.store,
         &state.llm,
         content,
@@ -148,8 +148,8 @@ async fn upload_text(
     .map_err(|e| e.to_string())?;
 
     Ok(Json(serde_json::json!({
-        "status": if id > 0 { "ok" } else { "duplicate" },
-        "id": id
+        "status": if result.id > 0 { "ok" } else { "duplicate" },
+        "id": result.id
     })))
 }
 
