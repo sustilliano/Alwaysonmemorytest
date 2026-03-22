@@ -36,31 +36,47 @@ pub async fn consolidate(
     let new_edges = edges::detect_all_edges(&all_memories, edge_threshold);
     info!(edge_count = new_edges.len(), "detected edges");
 
-    // Store edges
+    // Load existing edge pairs so we don't re-insert them on every consolidation run.
+    let existing_pairs: std::collections::HashSet<(i64, i64)> = store
+        .all_edges()
+        .await?
+        .into_iter()
+        .map(|e| (e.memory_a.min(e.memory_b), e.memory_a.max(e.memory_b)))
+        .collect();
+
+    // Store only new edges, collecting relationship labels for Connection_ records.
+    let mut edge_relationships: Vec<(i64, i64, f64, String)> = Vec::new();
     for (a, b, score) in &new_edges {
-        // Generate a brief relationship description for significant edges
+        let key = ((*a).min(*b), (*a).max(*b));
+        if existing_pairs.contains(&key) {
+            continue;
+        }
         let relationship = if *score > 0.6 {
             describe_edge(llm, &all_memories, *a, *b).await.unwrap_or_default()
         } else {
             String::new()
         };
-
         if let Err(e) = store.insert_edge(*a, *b, *score, &relationship).await {
             warn!("failed to insert edge {a}<->{b}: {e}");
         }
+        edge_relationships.push((*a, *b, *score, relationship));
     }
 
     // 2. Build the consolidation prompt with edge-aware context
     let insight = generate_insight(llm, &unconsolidated, &new_edges).await?;
 
-    // 3. Build connection records from the strongest edges
-    let connections: Vec<Connection_> = new_edges
+    // 3. Build connection records using the LLM-described relationship labels.
+    let connections: Vec<Connection_> = edge_relationships
         .iter()
         .take(10)
-        .map(|(a, b, score)| Connection_ {
+        .map(|(a, b, score, rel)| Connection_ {
             from_id: *a,
             to_id: *b,
-            relationship: format!("edge_score={score:.3}"),
+            relationship: if rel.is_empty() {
+                format!("edge_score={score:.3}")
+            } else {
+                rel.clone()
+            },
             strength: *score,
         })
         .collect();

@@ -235,7 +235,8 @@ async fn search_collection(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Also get collection-specific memories for direct results
+    // Get collection memories and rank them by relevance to the query,
+    // mirroring what top_k_memories did internally inside query().
     let memories = state
         .store
         .memories_by_collection(&collection)
@@ -244,21 +245,43 @@ async fn search_collection(
 
     let max = req.max_results.unwrap_or(5);
 
-    // Return both the synthesized answer and the raw matching memories
-    // in a format LocalRecall consumers expect
-    let results: Vec<SearchResult> = memories
+    // Score each memory by topic overlap with the query so similarity is real.
+    let query_words: std::collections::HashSet<String> = req.query
+        .split_whitespace()
+        .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    let relevant_ids: std::collections::HashSet<i64> =
+        result.sources.iter().copied().collect();
+
+    let mut scored: Vec<(&crate::db::Memory, f64)> = memories
         .iter()
-        .take(max)
-        .map(|m| SearchResult {
+        .map(|m| {
+            let topic_hits = m.topics.iter()
+                .filter(|t| query_words.contains(&t.to_lowercase()))
+                .count() as f64;
+            // Prefer memories the query engine already ranked relevant.
+            let relevance_bonus = if relevant_ids.contains(&m.id) { 0.5 } else { 0.0 };
+            let score = (topic_hits / (query_words.len().max(1) as f64) + relevance_bonus)
+                .clamp(0.0, 1.0);
+            (m, score)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(max);
+
+    let results: Vec<SearchResult> = scored
+        .into_iter()
+        .map(|(m, similarity)| SearchResult {
             content: m.content.clone(),
             source: m.source.clone(),
-            similarity: m.importance, // use importance as relevance proxy
+            similarity,
             metadata: serde_json::json!({
                 "summary": m.summary,
                 "topics": m.topics,
                 "entities": m.entities,
                 "traits": m.traits,
-                "edge_aware_answer": &result.answer,
             }),
         })
         .collect();

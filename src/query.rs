@@ -57,10 +57,15 @@ pub async fn query(
         }
     }
 
-    let top_edges: Vec<_> = edges.iter().take(MAX_EDGES).collect();
-    if !top_edges.is_empty() {
+    // Only show edges that touch memories relevant to this query.
+    let relevant_edges: Vec<_> = edges
+        .iter()
+        .filter(|e| relevant_ids.contains(&e.memory_a) || relevant_ids.contains(&e.memory_b))
+        .take(MAX_EDGES)
+        .collect();
+    if !relevant_edges.is_empty() {
         context.push_str("\n## Knowledge Boundaries (edges)\n");
-        for e in &top_edges {
+        for e in &relevant_edges {
             context.push_str(&format!(
                 "Edge: Memory #{} <-> Memory #{} (score={:.3}){}\n",
                 e.memory_a,
@@ -100,9 +105,8 @@ Answer:"#
     Ok(QueryResult {
         answer,
         sources: relevant_memories.iter().map(|m| m.id).collect(),
-        relevant_edges: top_edges
+        relevant_edges: relevant_edges
             .iter()
-            .filter(|e| relevant_ids.contains(&e.memory_a) || relevant_ids.contains(&e.memory_b))
             .take(5)
             .map(|e| (e.memory_a, e.memory_b, e.edge_score))
             .collect(),
